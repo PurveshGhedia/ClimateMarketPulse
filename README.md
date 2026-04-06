@@ -1,5 +1,5 @@
 # Analyzing the Impact of Climate Change on Commodity Prices
-### NLP Course Project — M.Sc. Data Science
+
 
 ---
 
