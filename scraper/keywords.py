@@ -12,10 +12,16 @@ CLIMATE_KEYWORDS = [
     # Agricultural climate impact
     "crop damage", "crop loss", "crop failure", "kharif", "rabi",
     "sowing delay", "harvest loss", "soil moisture", "water scarcity",
-    "groundwater", "irrigation deficit",
+    "groundwater", "irrigation deficit", "unseasonal", "reservoir level",
+    "rainfall deficiency", "normal rainfall", "southwest monsoon",
+    "northeast monsoon", "kharif sowing", "water stress",
+    # Pests and disease (climate-linked)
+    "pest", "infestation", "locust", "blight", "rust disease",
     # Climate policy
     "climate change", "global warming", "carbon", "cop26", "cop27",
-    "cop28", "ipcc", "heat stress",
+    "cop28", "ipcc", "heat stress", "skymet", "imd",
+    # Lockdown as disruption (relevant for 2020)
+    "lockdown",
 ]
 
 COMMODITY_KEYWORDS = [
@@ -30,16 +36,22 @@ COMMODITY_KEYWORDS = [
     "wheat", "rice", "paddy", "maize", "dal", "pulses", "tur dal",
     "chana", "lentil", "soybean", "jowar", "bajra",
     # Edible oils
-    "mustard oil", "sunflower oil", "palm oil", "edible oil",
+    "mustard oil", "sunflower oil", "palm oil", "edible oil", "oilseeds",
     # Price indicators
     "mandi price", "wholesale price", "retail price", "food inflation",
     "wpi", "cpi", "price rise", "price hike", "price crash",
     "vegetable prices", "fruit prices",
-    # Markets
-    "agmarknet", "apmc", "mandi", "commodity market",
+    # Markets & institutions
+    "agmarknet", "apmc", "mandi", "commodity market", "nafed", "fci",
+    # PIB-specific agricultural terms
+    "kharif crops", "rabi crops", "foodgrains", "food grains", "msp",
+    "minimum support price", "procurement", "horticulture",
+    "perishables", "cold storage", "warehousing", "agri",
+    "farm produce", "crop production", "agricultural produce",
+    "agricultural market", "farmer", "agriculture",
 ]
 
-# Combined for URL-level pre-filter (short, URL-friendly words only)
+# URL-level pre-filter for Wayback/newspaper scrapers
 URL_HINTS = [
     "agri", "agriculture", "commodity", "food", "price", "inflation",
     "monsoon", "flood", "drought", "crop", "market", "vegetable",
@@ -47,15 +59,33 @@ URL_HINTS = [
     "tomato", "wheat", "rice", "pulse",
 ]
 
+
 def keyword_prefilter(text: str) -> tuple:
     """
+    Strict filter for newspaper scrapers (mixed sources).
+    Passes if >= 1 climate AND >= 1 commodity keyword match.
     Returns (is_relevant, climate_hits, commodity_hits).
-    Article passes if it has >= 1 climate AND >= 1 commodity keyword.
     """
     if not text:
         return False, [], []
     t = text.lower()
-    climate_hits   = [k for k in CLIMATE_KEYWORDS   if k in t]
+    climate_hits = [k for k in CLIMATE_KEYWORDS if k in t]
     commodity_hits = [k for k in COMMODITY_KEYWORDS if k in t]
-    is_relevant    = len(climate_hits) >= 1 and len(commodity_hits) >= 1
+    is_relevant = len(climate_hits) >= 1 and len(commodity_hits) >= 1
+    return is_relevant, climate_hits, commodity_hits
+
+
+def pib_filter(text: str) -> tuple:
+    """
+    Relaxed filter for PIB press releases.
+    PIB articles are pre-filtered by ministry so ministry selection
+    already guarantees relevance. Passes if >= 1 match from either list.
+    Returns (is_relevant, climate_hits, commodity_hits).
+    """
+    if not text or len(text.split()) < 80:
+        return False, [], []
+    t = text.lower()
+    climate_hits = [k for k in CLIMATE_KEYWORDS if k in t]
+    commodity_hits = [k for k in COMMODITY_KEYWORDS if k in t]
+    is_relevant = len(climate_hits) >= 1 or len(commodity_hits) >= 1
     return is_relevant, climate_hits, commodity_hits
