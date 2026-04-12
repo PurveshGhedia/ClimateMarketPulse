@@ -68,3 +68,6 @@ desktop.ini
 # ── Playwright ───────────────────────────────────────────────────────
 playwright-report/
 test-results/
+scraper/et_debug.*
+scraper/test_*.py
+scraper/*_debug.py
