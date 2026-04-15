@@ -41,9 +41,20 @@ BASE_URL = "https://api.mospi.gov.in/api/cpi/getCPIData"
 BASE_YEAR = "2012"
 LEVEL = "Item"
 SERIES = "Current"
-STATE_CODE = "99"           # 99 = All India
+# STATE_CODE = "99"           # 99 = All India
+# Replace STATE_CODE = "99" with this:
+STATES = {
+    "1": "Jammu & Kashmir", "2": "Himachal Pradesh", "3": "Punjab", "4": "Chandigarh", "5": "Uttarakhand",
+    "6": "Haryana", "7": "Delhi", "8": "Rajasthan", "9": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim",
+    "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur", "15": "Mizoram", "16": "Tripura",
+    "17": "Meghalaya", "18": "Assam", "19": "West Bengal", "20": "Jharkhand", "21": "Odisha",
+    "22": "Chhattisgarh", "23": "Madhya Pradesh", "24": "Gujarat", "25": "Daman & Diu",
+    "26": "Dadra & Nagar Haveli", "27": "Maharashtra", "28": "Andhra Pradesh", "29": "Karnataka",
+    "30": "Goa", "31": "Lakshadweep", "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry",
+    "35": "Andaman & Nicobar Islands", "36": "Telangana", "99": "All India"
+}
 
-YEARS = list(range(2020, 2025))   # change to range(2020, 2027) for 2025-26
+YEARS = list(range(2020, 2027))   # change to range(2020, 2027) for 2025-26
 MONTHS = list(range(1, 13))
 REQUEST_DELAY = 0.5                        # seconds between requests
 
@@ -223,33 +234,36 @@ def init_db(db_path):
     conn = sqlite3.connect(str(db_path))
     conn.execute("""CREATE TABLE IF NOT EXISTS cfpi_item (
         item_code TEXT NOT NULL, item_name TEXT, subgroup TEXT,
-        state_code TEXT DEFAULT '99',
+        state_code TEXT NOT NULL,
         year INTEGER NOT NULL, month INTEGER NOT NULL,
         index_value REAL, inflation_yoy REAL,
         fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (item_code, state_code, year, month))""")
+
+    # We must recreate fetch_log to include state_code in the primary key
+    conn.execute("DROP TABLE IF EXISTS fetch_log")
     conn.execute("""CREATE TABLE IF NOT EXISTS fetch_log (
-        item_code TEXT NOT NULL, year INTEGER NOT NULL, month INTEGER NOT NULL,
-        PRIMARY KEY (item_code, year, month))""")
+        item_code TEXT NOT NULL, state_code TEXT NOT NULL, year INTEGER NOT NULL, month INTEGER NOT NULL,
+        PRIMARY KEY (item_code, state_code, year, month))""")
     conn.commit()
     return conn
 
 
-def done(conn, code, y, m):
+def done(conn, code, state_code, y, m):
     return conn.execute(
-        "SELECT 1 FROM fetch_log WHERE item_code=? AND year=? AND month=?",
-        (code, y, m)).fetchone() is not None
+        "SELECT 1 FROM fetch_log WHERE item_code=? AND state_code=? AND year=? AND month=?",
+        (code, state_code, y, m)).fetchone() is not None
 
 
-def mark(conn, code, y, m):
-    conn.execute(
-        "INSERT OR IGNORE INTO fetch_log VALUES (?,?,?)", (code, y, m))
+def mark(conn, code, state_code, y, m):
+    conn.execute("INSERT OR IGNORE INTO fetch_log VALUES (?,?,?,?)",
+                 (code, state_code, y, m))
     conn.commit()
-
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 
 # Create a custom adapter to allow legacy SSL renegotiation
+
 
 class LegacySSLAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
@@ -278,10 +292,14 @@ SESSION.headers.update(HEADERS)
 SESSION.mount("https://", LegacySSLAdapter())
 
 
-def fetch(code, year, month, retries=3):
+def fetch(code, state_code, year, month, retries=3):
+    # params = {"base_year": BASE_YEAR, "level": LEVEL, "series": SERIES,
+    #           "year": str(year), "month_code": str(month),
+    #           "state_code": STATE_CODE, "item_code": code,
+    #           "isView": "table", "page": "1", "limit": "500"}
     params = {"base_year": BASE_YEAR, "level": LEVEL, "series": SERIES,
               "year": str(year), "month_code": str(month),
-              "state_code": STATE_CODE, "item_code": code,
+              "state_code": state_code, "item_code": code,
               "isView": "table", "page": "1", "limit": "500"}
     for attempt in range(retries):
         try:
@@ -310,7 +328,7 @@ def fetch(code, year, month, retries=3):
     return []
 
 
-def upsert(records, code, name, year, month, conn):
+def upsert(records, code, name, state_code, year, month, conn):
     sg = subgroup(code)
     n = 0
     for rec in records:
@@ -328,23 +346,25 @@ def upsert(records, code, name, year, month, conn):
         except (ValueError, TypeError):
             idx, infl = None, None
         try:
+            # Note: Now inserting the dynamic state_code
             conn.execute(
                 "INSERT OR IGNORE INTO cfpi_item "
                 "(item_code,item_name,subgroup,state_code,year,month,index_value,inflation_yoy) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                (code, name, sg, STATE_CODE, year, month, idx, infl))
+                (code, name, sg, state_code, year, month, idx, infl))
             n += 1
         except sqlite3.IntegrityError:
             pass
     conn.commit()
     return n
 
-
 # ── Collection loop ───────────────────────────────────────────────────────────
+
 
 def collect(conn):
     codes = list(FOOD_ITEMS.keys())
-    total = len(codes) * len(YEARS) * len(MONTHS)
+    state_codes = list(STATES.keys())
+    total = len(codes) * len(state_codes) * len(YEARS) * len(MONTHS)
     done_n = conn.execute("SELECT COUNT(*) FROM fetch_log").fetchone()[0]
     logging.info(
         f"Total calls: {total} | Done: {done_n} | Remaining: {total - done_n}")
@@ -353,40 +373,46 @@ def collect(conn):
     call_n = done_n
     for code in codes:
         name = FOOD_ITEMS[code]
-        for year in YEARS:
-            for month in MONTHS:
-                if done(conn, code, year, month):
-                    continue
-                recs = fetch(code, year, month)
-                inserted += upsert(recs, code, name, year, month, conn)
-                mark(conn, code, year, month)
-                call_n += 1
-                if call_n % 200 == 0:
-                    pct = 100 * call_n / total
-                    logging.info(f"  [{pct:5.1f}%] {call_n}/{total} | "
-                                 f"rows={inserted} | {name[:22]} {year}-{month:02d}")
-                time.sleep(REQUEST_DELAY)
+        for state_code in state_codes:
+            state_name = STATES[state_code]
+            for year in YEARS:
+                for month in MONTHS:
+                    if done(conn, code, state_code, year, month):
+                        continue
+                    recs = fetch(code, state_code, year, month)
+                    inserted += upsert(recs, code, name,
+                                       state_code, year, month, conn)
+                    mark(conn, code, state_code, year, month)
+                    call_n += 1
+                    if call_n % 200 == 0:
+                        pct = 100 * call_n / total
+                        logging.info(f"  [{pct:5.1f}%] {call_n}/{total} | "
+                                     f"rows={inserted} | {name[:15]} ({state_name[:10]}) {year}-{month:02d}")
+                    time.sleep(REQUEST_DELAY)
     logging.info(f"Collection complete. New rows: {inserted}")
-
-
 # ── Export & summary ──────────────────────────────────────────────────────────
 
+
 def export(conn):
+    # Removed the WHERE state_code='99' filter
     df = pd.read_sql(
-        "SELECT item_code,item_name,subgroup,year,month,index_value,inflation_yoy "
-        "FROM cfpi_item WHERE state_code='99' ORDER BY subgroup,item_code,year,month",
+        "SELECT item_code,item_name,subgroup,state_code,year,month,index_value,inflation_yoy "
+        "FROM cfpi_item ORDER BY subgroup,item_code,state_code,year,month",
         conn)
     if df.empty:
         logging.warning("No data to export yet.")
         return
+
+    df['state_name'] = df['state_code'].astype(str).map(STATES)
     long_p = DATA_DIR / "cfpi_item_long.csv"
     df.to_csv(long_p, index=False)
     logging.info(f"  Long CSV -> {long_p} ({len(df)} rows)")
 
-    df["year_month"] = df["year"].astype(
-        str) + "-" + df["month"].apply(lambda m: f"{m:02d}")
+    # Wide export now groups by both state and year_month
+    df["state_year_month"] = df["state_name"] + "_" + \
+        df["year"].astype(str) + "-" + df["month"].apply(lambda m: f"{m:02d}")
     wide = df.pivot_table(
-        index="year_month", columns="item_name",
+        index="state_year_month", columns="item_name",
         values="index_value", aggfunc="first").reset_index()
     wide_p = DATA_DIR / "cfpi_item_wide.csv"
     wide.to_csv(wide_p, index=False)
@@ -395,32 +421,33 @@ def export(conn):
 
 
 def summary(conn):
-    total = conn.execute(
-        "SELECT COUNT(*) FROM cfpi_item WHERE state_code='99'").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM cfpi_item").fetchone()[0]
     print("\n" + "="*65)
     print("  ClimateMarketPulse - MoSPI CFPI Summary")
     print("="*65)
-    print(f"  Total rows (All India Combined): {total}")
+    print(f"  Total rows (All States + All India): {total}")
     rows = conn.execute("""
         SELECT subgroup, COUNT(DISTINCT item_code) as items,
                MIN(year)||'-'||printf('%02d',MIN(month)),
                MAX(year)||'-'||printf('%02d',MAX(month)),
                COUNT(*) as obs
-        FROM cfpi_item WHERE state_code='99'
+        FROM cfpi_item 
         GROUP BY subgroup ORDER BY subgroup""").fetchall()
     print(f"\n  {'Subgroup':<35} Items  Period           Obs")
     print(f"  {'-'*60}")
     for r in rows:
         print(f"  {r[0]:<35} {r[1]:>5}  {r[2]}->{r[3]}  {r[4]}")
     done_n = conn.execute("SELECT COUNT(*) FROM fetch_log").fetchone()[0]
-    ttl = len(FOOD_ITEMS) * len(YEARS) * 12
+
+    # Updated to multiply by the number of states!
+    ttl = len(FOOD_ITEMS) * len(STATES) * len(YEARS) * len(MONTHS)
     print(f"\n  Fetch progress: {done_n}/{ttl} ({100*done_n/ttl:.1f}%)")
     print(f"  DB  : {DB_PATH}")
     print(f"  CSVs: {DATA_DIR}/cfpi_item_long.csv  /  cfpi_item_wide.csv")
     print("="*65 + "\n")
 
-
 # ── Entry ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -433,7 +460,7 @@ def main():
     logging.info("MoSPI CFPI collection starting")
     logging.info(f"Endpoint : {BASE_URL}")
     logging.info(f"Items: {len(FOOD_ITEMS)}  Years: {YEARS[0]}-{YEARS[-1]}  "
-                 f"Delay: {REQUEST_DELAY}s  State: All India (99)")
+                 f"Delay: {REQUEST_DELAY}s  States: {len(STATES)}")
     conn = init_db(DB_PATH)
     collect(conn)
     export(conn)
