@@ -28,13 +28,13 @@ from keywords import keyword_prefilter
 START_DATE = date(2020, 1, 1)
 END_DATE = date(2024, 12, 31)
 DATE_STEP = 1          # scrape every 2nd day for good coverage
-TARGET = 2000       # stop after this many saved articles
+# TARGET = float('inf')       # stop after this many saved articles
 VALID_YEARS = set(range(2020, 2025))
 MAX_RETRIES = 3
 PAGE_DELAY = 3          # seconds between archive page fetches
-ARTICLE_DELAY = 6          # seconds between article fetches
-COOLDOWN_EVERY = 30     # articles before cooldown pause
-COOLDOWN_DURATION = 45     # seconds
+ARTICLE_DELAY = 2
+COOLDOWN_EVERY = 100
+COOLDOWN_DURATION = 20
 
 BASE_URL = "https://indianexpress.com/archive/{year}/{month}/{day}/"
 BASE_URL_PAGE = "https://indianexpress.com/archive/{year}/{month}/{day}/page/{page}/"
@@ -198,11 +198,11 @@ def run():
 
     print(f"\nScraping IE archive {START_DATE} → {END_DATE} "
           f"(every {DATE_STEP} days = ~{total_days} pages)")
-    print(f"Target: {TARGET} articles\n")
+    # print(f"Target: {TARGET} articles\n")
 
     while current_date <= END_DATE:
-        if saved >= TARGET:
-            break
+        # if saved >= TARGET:
+        #     break
 
         archive_links = get_archive_links(current_date)
         print(f"  {current_date} — {len(archive_links)} links", end="")
@@ -220,8 +220,8 @@ def run():
         print(f" → {len(relevant)} topic-relevant")
 
         for url in relevant:
-            if saved >= TARGET:
-                break
+            # if saved >= TARGET:
+            #     break
             if url in seen_urls:
                 continue
             seen_urls.add(url)

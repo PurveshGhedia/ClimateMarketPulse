@@ -60,6 +60,20 @@ URL_HINTS = [
 ]
 
 
+# def keyword_prefilter(text: str) -> tuple:
+#     """
+#     Strict filter for newspaper scrapers (mixed sources).
+#     Passes if >= 1 climate AND >= 1 commodity keyword match.
+#     Returns (is_relevant, climate_hits, commodity_hits).
+#     """
+#     if not text:
+#         return False, [], []
+#     t = text.lower()
+#     climate_hits = [k for k in CLIMATE_KEYWORDS if k in t]
+#     commodity_hits = [k for k in COMMODITY_KEYWORDS if k in t]
+#     is_relevant = len(climate_hits) >= 1 and len(commodity_hits) >= 1
+#     return is_relevant, climate_hits, commodity_hits
+
 def keyword_prefilter(text: str) -> tuple:
     """
     Strict filter for newspaper scrapers (mixed sources).
@@ -71,7 +85,7 @@ def keyword_prefilter(text: str) -> tuple:
     t = text.lower()
     climate_hits = [k for k in CLIMATE_KEYWORDS if k in t]
     commodity_hits = [k for k in COMMODITY_KEYWORDS if k in t]
-    is_relevant = len(climate_hits) >= 1 and len(commodity_hits) >= 1
+    is_relevant = len(climate_hits) >= 2 and len(commodity_hits) >= 2
     return is_relevant, climate_hits, commodity_hits
 
 
