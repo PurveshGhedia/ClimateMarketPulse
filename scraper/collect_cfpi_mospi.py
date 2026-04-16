@@ -25,6 +25,7 @@ Outputs (in data/raw/):
   cfpi_item_wide.csv     Pivot: rows=year-month, cols=item names (index values)
 """
 
+import argparse
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 import urllib3
@@ -300,7 +301,7 @@ def fetch(code, state_code, year, month, retries=3):
     params = {"base_year": BASE_YEAR, "level": LEVEL, "series": SERIES,
               "year": str(year), "month_code": str(month),
               "state_code": state_code, "item_code": code,
-              "isView": "table", "page": "1", "limit": "500"}
+              "isView": "table", "page": "1", "limit": "100"}
     for attempt in range(retries):
         try:
             r = SESSION.get(BASE_URL, params=params, timeout=30)
@@ -404,7 +405,8 @@ def export(conn):
         return
 
     df['state_name'] = df['state_code'].astype(str).map(STATES)
-    long_p = DATA_DIR / "cfpi_item_long.csv"
+    # long_p = DATA_DIR / "cfpi_item_long.csv"
+    long_p = DATA_DIR / f"cfpi_item_long_{YEARS[0]}.csv"
     df.to_csv(long_p, index=False)
     logging.info(f"  Long CSV -> {long_p} ({len(df)} rows)")
 
@@ -414,7 +416,8 @@ def export(conn):
     wide = df.pivot_table(
         index="state_year_month", columns="item_name",
         values="index_value", aggfunc="first").reset_index()
-    wide_p = DATA_DIR / "cfpi_item_wide.csv"
+    # wide_p = DATA_DIR / "cfpi_item_wide.csv"
+    wide_p = DATA_DIR / f"cfpi_item_wide_{YEARS[0]}.csv"
     wide.to_csv(wide_p, index=False)
     logging.info(
         f"  Wide CSV -> {wide_p} ({wide.shape[0]}r x {wide.shape[1]}c)")
@@ -443,24 +446,42 @@ def summary(conn):
     ttl = len(FOOD_ITEMS) * len(STATES) * len(YEARS) * len(MONTHS)
     print(f"\n  Fetch progress: {done_n}/{ttl} ({100*done_n/ttl:.1f}%)")
     print(f"  DB  : {DB_PATH}")
-    print(f"  CSVs: {DATA_DIR}/cfpi_item_long.csv  /  cfpi_item_wide.csv")
+    # print(f"  CSVs: {DATA_DIR}/cfpi_item_long.csv  /  cfpi_item_wide.csv")
+    print(
+        f"  CSVs: {DATA_DIR}/cfpi_item_long_{YEARS[0]}.csv  /  cfpi_item_wide_{YEARS[0]}.csv")
     print("="*65 + "\n")
 
 # ── Entry ─────────────────────────────────────────────────────────────────────
 
 
 def main():
+    parser = argparse.ArgumentParser(description="MoSPI CFPI Scraper")
+    parser.add_argument("--year", type=int, required=True,
+                        help="Year to scrape (e.g., 2020)")
+    args = parser.parse_args()
+
+    # Override the globals for this specific year
+    global YEARS, DB_PATH, LOG_PATH
+    YEARS = [args.year]
+
+    # Create unique DB and Log files for this year to prevent SQLite locking
+    DB_PATH = DATA_DIR / f"price_data_{args.year}.db"
+    LOG_PATH = DATA_DIR / f"collect_cfpi_{args.year}.log"
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-8s  %(message)s",
         datefmt="%H:%M:%S",
         handlers=[logging.StreamHandler(), logging.FileHandler(str(LOG_PATH))],
     )
-    logging.info("MoSPI CFPI collection starting")
+
+    logging.info(f"MoSPI CFPI collection starting for YEAR: {args.year}")
     logging.info(f"Endpoint : {BASE_URL}")
-    logging.info(f"Items: {len(FOOD_ITEMS)}  Years: {YEARS[0]}-{YEARS[-1]}  "
-                 f"Delay: {REQUEST_DELAY}s  States: {len(STATES)}")
+    logging.info(
+        f"Items: {len(FOOD_ITEMS)}  Delay: {REQUEST_DELAY}s  States: {len(STATES)}")
+
     conn = init_db(DB_PATH)
     collect(conn)
     export(conn)
