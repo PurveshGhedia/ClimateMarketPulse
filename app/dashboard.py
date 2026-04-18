@@ -665,9 +665,9 @@ with gr.Blocks(css=CSS, title="ClimateMarketPulse") as demo:
                 inputs=topic_dd, outputs=granger_plot,
             )
             gr.HTML("""
-            <div class="callout-amber">
-              <strong>Key finding:</strong>
-              <strong>Tur Dal</strong> is the most climate-sensitive commodity —
+            <div class="callout-amber" style="color: black;">
+              <strong style="color: black;">Key finding:</strong>
+              <strong style="color: black;">Tur Dal</strong> is the most climate-sensitive commodity —
               T0 kharif/rainfall Granger-causes inflation at lag 1 (p=0.017) and lag 3 (p=0.043).
               T1 veg prices also significant at lag 1 (p=0.003) and lag 3 (p=0.016).
               Matches the kharif pathway: monsoon variability → pulse harvest
@@ -687,8 +687,8 @@ with gr.Blocks(css=CSS, title="ClimateMarketPulse") as demo:
                 inputs=arimax_dd, outputs=arimax_plot,
             )
             gr.HTML("""
-            <div class="callout-green">
-              <strong>Tur Dal highlights:</strong>
+            <div class="callout-green" style="color: black;">
+              <strong style="color: black;">Tur Dal highlights:</strong>
               T1_veg_prices_lag1 coef=0.364 (p=0.003) ✓ &nbsp;|&nbsp;
               T6_covid_lag1 coef=−0.826 (p=0.026) ✓ &nbsp;|&nbsp;
               El Niño 2023 dummy = +5.35pp (p=0.002) ✓ &nbsp;|&nbsp;
@@ -709,8 +709,8 @@ with gr.Blocks(css=CSS, title="ClimateMarketPulse") as demo:
             )
             gr.Plot(fig_placebo(granger_df))
             gr.HTML("""
-            <div class="callout-amber">
-              <strong>Result — partially passes:</strong>
+            <div class="callout-amber" style="color: black;">
+              <strong style="color: black;">Result — partially passes:</strong>
               Tur Dal T0 min-p = 0.017 at lag-1 vs Mango T0 min-p = 0.35 — placebo holds.
               Tomato T0 marginal at lag-3 (p=0.054) — report Tur Dal vs Mango as the
               clean comparison; flag Tomato as exploratory.
