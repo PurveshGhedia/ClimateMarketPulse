@@ -26,6 +26,7 @@ EVENT_CSV = ROOT / "data" / "processed" / "results" / "event_study.csv"
 ARIMAX_TXT = ROOT / "data" / "processed" / "results" / "arimax_summary.txt"
 TOPIC_CSV = ROOT / "data" / "processed" / "topic_info.csv"
 PANEL_CSV = ROOT / "data" / "processed" / "analysis_panel.csv"
+SENTIMENT_CSV = ROOT / "data" / "processed" / "monthly_sentiment.csv"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 TEAL = "#1D9E75"
@@ -224,6 +225,38 @@ def load_price_series() -> pd.DataFrame:
     code_to_name = {v: k for k, v in COMMODITY_CODES.items()}
     df["commodity"] = df["item_code"].map(code_to_name).fillna(df["item_name"])
     return df
+
+
+def load_sentiment() -> pd.DataFrame:
+    if not SENTIMENT_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(SENTIMENT_CSV)
+    for c in ["net_sentiment", "mean_polarity", "mean_sentiment_score",
+              "positive_count", "negative_count", "neutral_count", "total_count"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["date"] = pd.to_datetime(
+        df["year"].astype(str) + "-" +
+        df["month"].astype(str).str.zfill(2) + "-01"
+    )
+    return df
+
+
+def load_sentiment_dist() -> dict:
+    """Overall positive/negative/neutral counts from articles.db."""
+    try:
+        df = _qdb(
+            ARTICLES_DB,
+            """SELECT sentiment_label, COUNT(*) AS n
+               FROM articles
+               WHERE sentiment_label IS NOT NULL
+                 AND is_duplicate = 0
+                 AND relevance_score >= 0.30
+               GROUP BY sentiment_label"""
+        )
+        return dict(zip(df["sentiment_label"], df["n"]))
+    except Exception:
+        return {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -534,6 +567,158 @@ def fig_placebo(gdf):
     return _layout(fig, "Placebo test — Mango should NOT respond to climate topics")
 
 
+def fig_sentiment_series(sdf: pd.DataFrame) -> go.Figure:
+    if sdf.empty:
+        return _no_data_fig("Run sentiment_score.py first — monthly_sentiment.csv not found")
+
+    # 3-month rolling average
+    sdf = sdf.sort_values("date").copy()
+    sdf["rolling_net"] = sdf["net_sentiment"].rolling(
+        3, min_periods=1).mean().round(4)
+
+    fig = go.Figure()
+
+    # zero baseline
+    fig.add_hline(y=0, line_color="#CCCAC2", line_width=1)
+
+    # event shading
+    for x0, x1, label, fill in [
+        ("2020-03-01", "2020-06-30", "COVID-19",      "rgba(231,76,60,0.08)"),
+        ("2022-03-01", "2022-05-31", "Heatwave 2022", "rgba(239,159,39,0.10)"),
+        ("2023-06-01", "2023-10-31", "El Niño 2023",  "rgba(29,158,117,0.10)"),
+    ]:
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=fill, line_width=0,
+                      annotation_text=label, annotation_position="top left",
+                      annotation_font_size=10)
+
+    # monthly net sentiment bars (colour by sign)
+    bar_colors = [TEAL if v >= 0 else RED for v in sdf["net_sentiment"]]
+    fig.add_trace(go.Bar(
+        x=sdf["date"], y=sdf["net_sentiment"],
+        marker_color=bar_colors, opacity=0.45,
+        name="Monthly net sentiment",
+        hovertemplate="%{x|%b %Y}<br>net sentiment: %{y:.3f}<extra></extra>",
+    ))
+
+    # 3-month rolling line
+    fig.add_trace(go.Scatter(
+        x=sdf["date"], y=sdf["rolling_net"],
+        mode="lines", name="3-month rolling avg",
+        line=dict(color=BLUE, width=2.5),
+        hovertemplate="%{x|%b %Y}<br>3m avg: %{y:.3f}<extra></extra>",
+    ))
+
+    fig.update_layout(
+        xaxis_title="",
+        yaxis_title="Net sentiment  (positive − negative) / total",
+        legend=dict(orientation="h", y=-0.18),
+        barmode="relative",
+    )
+    return _layout(fig, "Monthly climate-news sentiment index (FinBERT · relevance ≥ 0.30)")
+
+
+def fig_sentiment_stack(sdf: pd.DataFrame) -> go.Figure:
+    if sdf.empty:
+        return _no_data_fig("Run sentiment_score.py first — monthly_sentiment.csv not found")
+
+    sdf = sdf.sort_values("date").copy()
+    fig = go.Figure()
+    for col, color, label in [
+        ("positive_count", TEAL, "Positive"),
+        ("neutral_count",  GRAY, "Neutral"),
+        ("negative_count", RED,  "Negative"),
+    ]:
+        fig.add_trace(go.Bar(
+            x=sdf["date"], y=sdf[col],
+            name=label, marker_color=color,
+            hovertemplate=f"{label}<br>%{{x|%b %Y}}: %{{y}} articles<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack",
+        xaxis_title="",
+        yaxis_title="Article count",
+        legend=dict(orientation="h", y=-0.18),
+    )
+    return _layout(fig, "Monthly article volume by sentiment label", height=320)
+
+
+def fig_sentiment_dist(dist: dict) -> go.Figure:
+    if not dist:
+        return _no_data_fig("No scored articles in articles.db yet")
+    labels = ["positive", "neutral", "negative"]
+    values = [dist.get(l, 0) for l in labels]
+    colors = [TEAL, GRAY, RED]
+    total = sum(values)
+    fig = go.Figure(go.Bar(
+        x=labels, y=values,
+        marker_color=colors,
+        text=[f"{v}<br>({v/total*100:.1f}%)" for v in values],
+        textposition="outside",
+        hovertemplate="%{x}: %{y} articles<extra></extra>",
+    ))
+    fig.update_layout(yaxis_title="Article count", showlegend=False)
+    return _layout(
+        fig,
+        f"Overall sentiment distribution — {total:,} scored articles (FinBERT)",
+        height=320,
+    )
+
+
+def tbl_extreme_months(sdf: pd.DataFrame) -> str:
+    """Returns an HTML table of the 5 most negative and 5 most positive months."""
+    if sdf.empty:
+        return ""
+    sdf = sdf.sort_values("date").copy()
+    sdf["month_label"] = sdf["date"].dt.strftime("%b %Y")
+
+    top_neg = sdf.nsmallest(5, "net_sentiment")[
+        ["month_label", "net_sentiment", "negative_count",
+            "positive_count", "total_count"]
+    ]
+    top_pos = sdf.nlargest(5, "net_sentiment")[
+        ["month_label", "net_sentiment", "negative_count",
+            "positive_count", "total_count"]
+    ]
+
+    def rows(df, color):
+        out = ""
+        for _, r in df.iterrows():
+            out += (f"<tr>"
+                    f"<td style='padding:7px 12px;'>{r['month_label']}</td>"
+                    f"<td style='padding:7px 12px;text-align:center;"
+                    f"color:{color};font-weight:500;'>{r['net_sentiment']:+.3f}</td>"
+                    f"<td style='padding:7px 12px;text-align:center;'>{int(r['negative_count'])}</td>"
+                    f"<td style='padding:7px 12px;text-align:center;'>{int(r['positive_count'])}</td>"
+                    f"<td style='padding:7px 12px;text-align:center;'>{int(r['total_count'])}</td>"
+                    f"</tr>")
+        return out
+
+    header = ("<tr style='background:var(--color-background-secondary,#F1EFE8);'>"
+              "<th style='padding:7px 12px;text-align:left;'>Month</th>"
+              "<th style='padding:7px 12px;'>Net sentiment</th>"
+              "<th style='padding:7px 12px;'>Negative</th>"
+              "<th style='padding:7px 12px;'>Positive</th>"
+              "<th style='padding:7px 12px;'>Total</th></tr>")
+
+    return f"""
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;font-size:13px;">
+      <div>
+        <p style="font-size:11px;color:#5F5E5A;text-transform:uppercase;
+                  letter-spacing:0.06em;margin-bottom:6px;">5 most negative months</p>
+        <table style="width:100%;border-collapse:collapse;">
+          {header}{rows(top_neg, '#E24B4A')}
+        </table>
+      </div>
+      <div>
+        <p style="font-size:11px;color:#5F5E5A;text-transform:uppercase;
+                  letter-spacing:0.06em;margin-bottom:6px;">5 most positive months</p>
+        <table style="width:100%;border-collapse:collapse;">
+          {header}{rows(top_pos, '#1D9E75')}
+        </table>
+      </div>
+    </div>"""
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STARTUP — load everything once
 # ══════════════════════════════════════════════════════════════════════════════
@@ -546,6 +731,8 @@ granger_df = load_granger()
 event_df = load_event_study()
 arimax_data = parse_arimax_txt()
 price_df = load_price_series()
+sentiment_df = load_sentiment()
+sentiment_dist = load_sentiment_dist()
 
 all_commodities = sorted(price_df["commodity"].unique().tolist()) \
     if not price_df.empty else list(COMMODITY_CODES.keys())
@@ -714,6 +901,25 @@ with gr.Blocks(css=CSS, title="ClimateMarketPulse") as demo:
               Tur Dal T0 min-p = 0.017 at lag-1 vs Mango T0 min-p = 0.35 — placebo holds.
               Tomato T0 marginal at lag-3 (p=0.054) — report Tur Dal vs Mango as the
               clean comparison; flag Tomato as exploratory.
+            </div>""")
+
+        with gr.Tab("Sentiment"):
+            gr.Markdown(
+                "**ProsusAI/finbert** scored on headline + first 300 chars of body text. "
+                "Articles with `relevance_score ≥ 0.30` only.  \n"
+                "`net_sentiment = (positive − negative) / total`  · ranges −1 to +1"
+            )
+            gr.Plot(fig_sentiment_series(sentiment_df))
+            gr.Plot(fig_sentiment_stack(sentiment_df))
+            with gr.Row():
+                gr.Plot(fig_sentiment_dist(sentiment_dist))
+                gr.HTML(tbl_extreme_months(sentiment_df))
+            gr.HTML("""
+            <div class="callout-amber" style="color: black;">
+            <strong style="color: black;">Note:</strong> Negative net sentiment during climate event windows
+            (Heatwave 2022, El Niño 2023) would support the hypothesis that media tone
+            leads commodity price increases by 1–2 months. Compare the index troughs
+            against the price trend spikes in the <em style="color: black;">Price trends</em> tab.
             </div>""")
 
         with gr.Tab("Findings summary"):
